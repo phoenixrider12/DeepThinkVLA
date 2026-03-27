@@ -62,4 +62,8 @@ deepspeed src/train.py \
     --seed 429 \
     --resume false \
     --gradient_accumulation_steps 2 \
-    
+    --enable_divergence_loss false \
+    --enable_entropy_loss false \
+    --cot_perturbation_type shuffle \
+    --divergence_loss_weight 0.1 \
+    --entropy_loss_weight 0.1

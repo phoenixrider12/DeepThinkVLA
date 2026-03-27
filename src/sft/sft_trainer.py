@@ -344,6 +344,80 @@ class DeepThinkVLATrainer(Trainer):
             }
         self.log(metrics)
         ##############################################################################################################
+        # Counterfactual Regularization Loss (Divergence & Entropy)
+        enable_div = getattr(self.args, "enable_divergence_loss", False)
+        enable_ent = getattr(self.args, "enable_entropy_loss", False)
+
+        if enable_div or enable_ent:
+            with torch.enable_grad():
+                perturbed_inputs = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+                _labels = inputs.get("labels")
+                if _labels is not None and "input_ids" in perturbed_inputs:
+                    perturbed_input_ids = perturbed_inputs["input_ids"]
+                    
+                    config = model.module.config if hasattr(model, "module") else model.config
+                    ignore_idx = config.ignore_index
+                    begin_idx = config.action_token_begin_idx
+                    end_idx = config.action_token_end_idx
+                    eos_id = config.eos_token_id
+                    
+                    # Define CoT: not ignored, not actions, not special endings
+                    is_not_ignore = _labels != ignore_idx
+                    is_not_action = (_labels < begin_idx) | (_labels > end_idx)
+                    is_not_special = (_labels != 257156) & (_labels != eos_id)
+                    cot_mask = is_not_ignore & is_not_action & is_not_special
+                    
+                    perturb_type = getattr(self.args, "cot_perturbation_type", "shuffle")
+                    
+                    for b in range(perturbed_input_ids.shape[0]):
+                        row_mask = cot_mask[b]
+                        if row_mask.sum() > 0:
+                            if perturb_type == "shuffle":
+                                cot_tokens = perturbed_input_ids[b, row_mask]
+                                shuffled_indices = torch.randperm(cot_tokens.shape[0])
+                                perturbed_input_ids[b, row_mask] = cot_tokens[shuffled_indices]
+                            elif perturb_type == "random":
+                                vocab_size = config.text_config.vocab_size
+                                random_tokens = torch.randint(0, vocab_size, (row_mask.sum(),), device=perturbed_input_ids.device)
+                                perturbed_input_ids[b, row_mask] = random_tokens
+                    
+                    # Forward pass with perturbed inputs
+                    perturbed_outputs = model(**perturbed_inputs)
+                    
+                    true_logits = outputs.logits[:, :-1, :]
+                    pert_logits = perturbed_outputs.logits[:, :-1, :]
+                    
+                    # We use all_actions_mask from above (already computed)
+                    true_action_logits = true_logits[all_actions_mask] 
+                    pert_action_logits = pert_logits[all_actions_mask] 
+                    
+                    if true_action_logits.shape[0] > 0:
+                        cf_loss = 0.0
+                        
+                        if enable_div:
+                            true_probs = F.softmax(true_action_logits, dim=-1).detach()
+                            pert_log_probs = F.log_softmax(pert_action_logits, dim=-1)
+                            
+                            kl_div = F.kl_div(pert_log_probs, true_probs, reduction='batchmean')
+                            div_weight = getattr(self.args, "divergence_loss_weight", 0.1)
+                            margin = 5.0
+                            div_penalty = torch.clamp(margin - kl_div, min=0.0)
+                            cf_loss += div_weight * div_penalty
+                            
+                        if enable_ent:
+                            vocab_size_act = pert_action_logits.shape[-1]
+                            pert_probs = F.softmax(pert_action_logits, dim=-1)
+                            pert_log_probs = F.log_softmax(pert_action_logits, dim=-1)
+                            
+                            entropy = -torch.sum(pert_probs * pert_log_probs, dim=-1).mean()
+                            ent_weight = getattr(self.args, "entropy_loss_weight", 0.1)
+                            
+                            max_ent = math.log(vocab_size_act)
+                            ent_penalty = max_ent - entropy
+                            cf_loss += ent_weight * ent_penalty
+                            
+                        loss = loss + cf_loss
+        ##############################################################################################################
 
         return (loss, outputs) if return_outputs else loss
 
