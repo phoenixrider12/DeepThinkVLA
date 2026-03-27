@@ -215,6 +215,21 @@ class TrainingArgument(TrainingArguments):
     remove_unused_columns: bool = field(default=False)
     """Whether to remove unused columns from the dataset. If False, will keep all columns."""
 
+    enable_divergence_loss: bool = field(default=False)
+    """Enable KL divergence loss to push counterfactual action distributions away from true ones."""
+
+    enable_entropy_loss: bool = field(default=False)
+    """Enable entropy maximization on counterfactual action distributions."""
+
+    cot_perturbation_type: str = field(default="shuffle")
+    """Type of perturbation to use for CoT: 'shuffle' or 'random'."""
+
+    divergence_loss_weight: float = field(default=0.1)
+    """Weight for the divergence loss."""
+
+    entropy_loss_weight: float = field(default=0.1)
+    """Weight for the entropy maximization loss."""
+
     # ddp_find_unused_parameters: bool = field(default=False)
     # """Whether to find unused parameters in DDP. If False, will not find unused parameters."""
     # ddp_bucket_cap_mb: int = field(default=100)
