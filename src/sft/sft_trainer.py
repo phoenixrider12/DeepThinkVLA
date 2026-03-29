@@ -285,7 +285,7 @@ class DeepThinkVLATrainer(Trainer):
             if num_items_in_batch is not None:
                 loss_kwargs["num_items_in_batch"] = num_items_in_batch
             inputs = {**inputs, **loss_kwargs}
-        outputs = model(**inputs)
+        outputs = model(**inputs, output_attentions=True)
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:
@@ -342,6 +342,73 @@ class DeepThinkVLATrainer(Trainer):
                 "action_l1_loss": action_l1_loss.item(),
                 "predict_token_accuracy": predict_token_accuracy.item(),
             }
+
+        # Calculate attention from action tokens to various modalities
+        if hasattr(outputs, "attentions") and outputs.attentions is not None:
+            layer_attns = outputs.attentions[-1]
+            avg_layer_attn = layer_attns.mean(dim=1)
+            
+            _labels = labels if labels is not None else inputs.get("labels")
+            input_ids = inputs.get("input_ids")
+            if _labels is not None and input_ids is not None:
+                config = model.module.config if hasattr(model, "module") else model.config
+                target_model = model.module if hasattr(model, "module") else model
+                pad_token_id = target_model.pad_token_id
+                image_token_index = getattr(config, "image_token_index", None)
+
+                ignore_idx = config.ignore_index
+                begin_idx = config.action_token_begin_idx
+                end_idx = config.action_token_end_idx
+                eos_id = config.eos_token_id
+                
+                # 1. CoT Mask
+                is_not_ignore = _labels != ignore_idx
+                is_not_action = (_labels < begin_idx) | (_labels > end_idx)
+                is_not_special = (_labels != 257156) & (_labels != eos_id)
+                cot_mask = is_not_ignore & is_not_action & is_not_special
+                
+                # 2. Vision and Text Input Masks (Prompt)
+                is_prompt = _labels == ignore_idx
+                is_pad = input_ids == pad_token_id if pad_token_id is not None else torch.zeros_like(is_prompt)
+                is_prompt_true = is_prompt & (~is_pad)
+                
+                if image_token_index is not None:
+                    image_mask = is_prompt_true & (input_ids == image_token_index)
+                else:
+                    image_mask = torch.zeros_like(is_prompt)
+                text_mask = is_prompt_true & (~image_mask)
+                
+                # 3. Action Mask
+                action_token_mask = (input_ids >= begin_idx) & (input_ids <= end_idx)
+                
+                cot_scores, image_scores, text_scores, action_scores = [], [], [], []
+                
+                for b in range(avg_layer_attn.shape[0]):
+                    queries = torch.nonzero(all_actions_mask[b]).squeeze(-1)
+                    cot_keys = torch.nonzero(cot_mask[b]).squeeze(-1)
+                    img_keys = torch.nonzero(image_mask[b]).squeeze(-1)
+                    txt_keys = torch.nonzero(text_mask[b]).squeeze(-1)
+                    act_keys = torch.nonzero(action_token_mask[b]).squeeze(-1)
+                    
+                    if len(queries) > 0:
+                        if len(cot_keys) > 0:
+                            cot_scores.append(avg_layer_attn[b][queries][:, cot_keys].sum(dim=-1).mean().item())
+                        if len(img_keys) > 0:
+                            image_scores.append(avg_layer_attn[b][queries][:, img_keys].sum(dim=-1).mean().item())
+                        if len(txt_keys) > 0:
+                            text_scores.append(avg_layer_attn[b][queries][:, txt_keys].sum(dim=-1).mean().item())
+                        if len(act_keys) > 0:
+                            action_scores.append(avg_layer_attn[b][queries][:, act_keys].sum(dim=-1).mean().item())
+                        
+                if cot_scores:
+                    metrics["action_to_cot_attention"] = sum(cot_scores) / len(cot_scores)
+                if image_scores:
+                    metrics["action_to_vision_attention"] = sum(image_scores) / len(image_scores)
+                if text_scores:
+                    metrics["action_to_text_attention"] = sum(text_scores) / len(text_scores)
+                if action_scores:
+                    metrics["action_to_action_attention"] = sum(action_scores) / len(action_scores)
+
         self.log(metrics)
         ##############################################################################################################
         # Counterfactual Regularization Loss (Divergence & Entropy)
