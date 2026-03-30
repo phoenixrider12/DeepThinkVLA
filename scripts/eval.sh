@@ -1,7 +1,7 @@
 #!/bin/bash
 # This script evaluates DeepThinkVLA checkpoints on LIBERO suites.
 # Author: Cheng Yin
-# Date: 2025-09
+# Date:-09
 # Copyright (c) Cheng Yin. All rights reserved.
 # See LICENSE file in the project root for license information.
 
@@ -19,7 +19,7 @@ export CUDA_VISIBLE_DEVICES=0
 # libero_object, libero_spatial, libero_goal, libero_10, libero_90
 
 python -m experiments.run_libero_eval \
-    --pretrained_checkpoint yinchenghust/deepthinkvla_libero_cot_sft \
+    --pretrained_checkpoint checkpoints/sft/deepthinkvla/libero_cot/checkpoint-15000 \
     --num_images_in_input 2 \
     --task_suite_name libero_10 \
     --max_new_tokens 2048 \

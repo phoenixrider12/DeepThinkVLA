@@ -16,7 +16,7 @@ fi
 
 export WANDB_PROJECT="deepthinkvla"
 export WANDB_MODE="online"
-export WANDB_NAME="libero_cot"
+export WANDB_NAME="libero_cot_lora_freeze_llm_new_loss"
 export TOKENIZERS_PARALLELISM="false"
 export TRANSFORMERS_NO_ADVISORY_WARNINGS="true"
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -42,11 +42,11 @@ deepspeed src/train.py \
     --root "data/datasets/yinchenghust/libero_cot" \
     --run_name $WANDB_NAME \
     --output_dir $OUTPUT_DIR \
-    --per_device_train_batch_size 8 \
+    --per_device_train_batch_size 4 \
     --auto_find_batch_size false \
     --max_steps 150005 \
     --num_train_epochs 100 \
-    --save_steps 10000 \
+    --save_steps 5000 \
     --save_total_limit 40 \
     --warmup_steps 1000 \
     --lr_scheduler_type cosine \
@@ -61,7 +61,9 @@ deepspeed src/train.py \
     --log_level info \
     --seed 429 \
     --resume false \
-    --gradient_accumulation_steps 2 \
+    --gradient_accumulation_steps 4 \
+    --lora_enable true \
+    --freeze_llm true \
     --enable_divergence_loss false \
     --enable_entropy_loss false \
     --cot_perturbation_type shuffle \
