@@ -19,7 +19,7 @@ export CUDA_VISIBLE_DEVICES=0
 # libero_object, libero_spatial, libero_goal, libero_10, libero_90
 
 python -m experiments.run_libero_eval \
-    --pretrained_checkpoint checkpoints/sft/deepthinkvla/libero_cot/checkpoint-15000 \
+    --pretrained_checkpoint checkpoints/sft/deepthinkvla/libero_cot/checkpoint-5000 \
     --num_images_in_input 2 \
     --task_suite_name libero_10 \
     --max_new_tokens 2048 \

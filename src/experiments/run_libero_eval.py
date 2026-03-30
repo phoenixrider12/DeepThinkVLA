@@ -156,14 +156,15 @@ def setup_logging(cfg: GenerateConfig):
     log_file = open(local_log_filepath, "w")
     logger.info(f"Logging to local log file: {local_log_filepath}")
 
-    # Initialize Weights & Biases logging if enabled
-    swanlab.login(cfg.swanlab_api_key)  # NOTE: previous login information will be overwritten
-    swanlab.init(
-        project=cfg.project_name,
-        experiment_name=run_id,
-        logdir=cfg.local_log_dir,
-        mode=cfg.swanlab_mode,
-    )
+    if cfg.swanlab_mode != 'disabled':    
+        # Initialize Weights & Biases logging if enabled
+        swanlab.login(cfg.swanlab_api_key)  # NOTE: previous login information will be overwritten
+        swanlab.init(
+            project=cfg.project_name,
+            experiment_name=run_id,
+            logdir=cfg.local_log_dir,
+            mode=cfg.swanlab_mode,
+        )
 
     return log_file, local_log_filepath, run_id
 
