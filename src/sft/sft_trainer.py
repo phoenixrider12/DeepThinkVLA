@@ -287,20 +287,97 @@ class DeepThinkVLATrainer(Trainer):
             inputs = {**inputs, **loss_kwargs}
             
         enable_action_grads = getattr(self.args, "log_action_gradients", False)
-        embeds_list = []
-        handle = None
-        if enable_action_grads:
-            unwrapped_model = self.accelerator.unwrap_model(model)
-            if hasattr(unwrapped_model, "get_input_embeddings"):
-                embed_layer = unwrapped_model.get_input_embeddings()
-                def fw_hook(module, inputs_orig, output):
-                    embeds_list.append(output)
-                handle = embed_layer.register_forward_hook(fw_hook)
-
-        outputs = model(**inputs, output_attentions=True)
         
-        if handle is not None:
-            handle.remove()
+        is_logging_step = (self.state.global_step > 0 and self.state.global_step % self.args.logging_steps == 0)
+        should_compute_action_grads = enable_action_grads and is_logging_step and getattr(self, "_last_action_grad_step", -1) != self.state.global_step
+        
+        if should_compute_action_grads:
+            self._last_action_grad_step = self.state.global_step
+            with torch.enable_grad():
+                unwrapped_model = self.accelerator.unwrap_model(model)
+                embeds_list = []
+                if hasattr(unwrapped_model, "get_input_embeddings"):
+                    embed_layer = unwrapped_model.get_input_embeddings()
+                    def fw_hook(module, inputs_orig, output):
+                        embeds_list.append(output)
+                    handle = embed_layer.register_forward_hook(fw_hook)
+                    
+                    outputs_first = model(**inputs)
+                    handle.remove()
+                    
+                    if len(embeds_list) > 0:
+                        embeds = embeds_list[0]
+                        ground_truth_token_ids = inputs["labels"][:, 1:]
+                        config = model.module.config if hasattr(model, "module") else model.config
+                        
+                        all_actions_mask = get_actions_mask_cot(
+                            ground_truth_token_ids,
+                            action_token_begin_idx=config.action_token_begin_idx,
+                            action_token_end_idx=config.action_token_end_idx,
+                            ignore_index=config.ignore_index,
+                        )
+                        
+                        true_action_logits = outputs_first.logits[:, :-1, :][all_actions_mask]
+                        if true_action_logits.shape[0] > 0:
+                            action_labels = ground_truth_token_ids[all_actions_mask]
+                            action_loss = nn.CrossEntropyLoss()(true_action_logits, action_labels)
+                            
+                            try:
+                                grads = torch.autograd.grad(
+                                    outputs=action_loss,
+                                    inputs=embeds,
+                                    retain_graph=False,
+                                    create_graph=False,
+                                    only_inputs=True,
+                                    allow_unused=True
+                                )[0]
+                                
+                                if grads is not None:
+                                    _labels = inputs.get("labels")
+                                    input_ids = inputs.get("input_ids")
+                                    target_model = model.module if hasattr(model, "module") else model
+                                    pad_token_id = getattr(target_model, "pad_token_id", None)
+                                    image_token_index = getattr(config, "image_token_index", None)
+                                    
+                                    ignore_idx = config.ignore_index
+                                    begin_idx = config.action_token_begin_idx
+                                    end_idx = config.action_token_end_idx
+                                    eos_id = config.eos_token_id
+                                    
+                                    is_prompt = (_labels == ignore_idx)
+                                    is_pad = (input_ids == pad_token_id) if pad_token_id is not None else torch.zeros_like(is_prompt)
+                                    prompt_true_mask = is_prompt & (~is_pad)
+                                    
+                                    if image_token_index is not None:
+                                        vision_mask = prompt_true_mask & (input_ids == image_token_index)
+                                    else:
+                                        vision_mask = torch.zeros_like(is_prompt)
+                                        
+                                    text_mask = prompt_true_mask & (~vision_mask)
+                                    
+                                    is_not_ignore = _labels != ignore_idx
+                                    is_not_action = (_labels < begin_idx) | (_labels > end_idx)
+                                    is_not_special = (_labels != 257156) & (_labels != eos_id)
+                                    cot_mask = is_not_ignore & is_not_action & is_not_special
+                                    
+                                    grad_norms = torch.norm(grads, p=2, dim=-1)
+                                    
+                                    vision_grad_norm = grad_norms[vision_mask].mean()
+                                    text_grad_norm = grad_norms[text_mask].mean()
+                                    cot_grad_norm = grad_norms[cot_mask].mean()
+                                    
+                                    if not hasattr(self, "_action_grads"):
+                                        self._action_grads = {}
+                                    self._action_grads["vision_grad_norm"] = vision_grad_norm.item() if not torch.isnan(vision_grad_norm) else 0.0
+                                    self._action_grads["text_grad_norm"] = text_grad_norm.item() if not torch.isnan(text_grad_norm) else 0.0
+                                    self._action_grads["cot_grad_norm"] = cot_grad_norm.item() if not torch.isnan(cot_grad_norm) else 0.0
+                            except RuntimeError as e:
+                                logger.warning(f"Failed to compute action gradients: {e}")
+                    
+                    del outputs_first, embeds_list
+
+        # Normal forward pass for the actual step update
+        outputs = model(**inputs, output_attentions=True)
             
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
@@ -509,45 +586,8 @@ class DeepThinkVLATrainer(Trainer):
                         loss = loss + cf_loss
                         metrics["cf_loss"] = cf_loss.item() if isinstance(cf_loss, torch.Tensor) else cf_loss
                         
-        if enable_action_grads and len(embeds_list) > 0:
-            embeds = embeds_list[0]
-            true_action_logits = outputs.logits[:, :-1, :][all_actions_mask]
-            
-            if true_action_logits.shape[0] > 0:
-                action_logits_sum = true_action_logits.sum()
-                try:
-                    grads = torch.autograd.grad(
-                        outputs=action_logits_sum,
-                        inputs=embeds,
-                        retain_graph=True,
-                        create_graph=False,
-                        only_inputs=True,
-                        allow_unused=True
-                    )[0]
-                    
-                    if grads is not None:
-                        _labels = inputs.get("labels")
-                        config = model.module.config if hasattr(model, "module") else model.config
-                        ignore_idx = config.ignore_index
-                        begin_idx = config.action_token_begin_idx
-                        end_idx = config.action_token_end_idx
-                        eos_id = config.eos_token_id
-                        
-                        prompt_mask = (_labels == ignore_idx)
-                        is_not_ignore = _labels != ignore_idx
-                        is_not_action = (_labels < begin_idx) | (_labels > end_idx)
-                        is_not_special = (_labels != 257156) & (_labels != eos_id)
-                        cot_mask = is_not_ignore & is_not_action & is_not_special
-                        
-                        grad_norms = torch.norm(grads, p=2, dim=-1)
-                        
-                        prompt_grad_norm = grad_norms[prompt_mask].mean()
-                        cot_grad_norm = grad_norms[cot_mask].mean()
-                        
-                        metrics["prompt_grad_norm"] = prompt_grad_norm.item() if not torch.isnan(prompt_grad_norm) else 0.0
-                        metrics["cot_grad_norm"] = cot_grad_norm.item() if not torch.isnan(cot_grad_norm) else 0.0
-                except RuntimeError as e:
-                    logger.warning(f"Failed to compute action gradients: {e}")
+        if hasattr(self, "_action_grads") and self._action_grads:
+            metrics.update(self._action_grads)
 
         metrics["total_loss"] = loss.item()
         self.log(metrics)
