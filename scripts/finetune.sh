@@ -42,7 +42,7 @@ deepspeed src/train.py \
     --root "data/datasets/yinchenghust/libero_cot" \
     --run_name $WANDB_NAME \
     --output_dir $OUTPUT_DIR \
-    --per_device_train_batch_size 4 \
+    --per_device_train_batch_size 8 \
     --auto_find_batch_size false \
     --max_steps 150005 \
     --num_train_epochs 100 \
@@ -61,7 +61,7 @@ deepspeed src/train.py \
     --log_level info \
     --seed 429 \
     --resume false \
-    --gradient_accumulation_steps 4 \
+    --gradient_accumulation_steps 2 \
     --lora_enable false \
     --freeze_llm false \
     --enable_divergence_loss false \

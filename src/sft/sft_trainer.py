@@ -360,7 +360,6 @@ class DeepThinkVLATrainer(Trainer):
                 "ce_loss": loss.item(),
             }
 
-        print(outputs.attentions)
         # Calculate attention from action tokens to various modalities
         if hasattr(outputs, "attentions") and outputs.attentions is not None:
             layer_attns = outputs.attentions[-1]
