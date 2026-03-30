@@ -330,12 +330,11 @@ class DeepThinkVLATrainer(Trainer):
                         
                         true_action_logits = outputs_first.logits[:, :-1, :][all_actions_mask]
                         if true_action_logits.shape[0] > 0:
-                            action_labels = ground_truth_token_ids[all_actions_mask]
-                            action_loss = nn.CrossEntropyLoss()(true_action_logits, action_labels)
+                            action_logits_sum = true_action_logits.sum()
                             
                             try:
                                 # Standard backwards on the isolated graph
-                                action_loss.backward()
+                                action_logits_sum.backward()
                                 grads = embeds.grad
                                 
                                 if grads is not None:
