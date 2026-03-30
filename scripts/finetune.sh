@@ -16,7 +16,7 @@ fi
 
 export WANDB_PROJECT="deepthinkvla"
 export WANDB_MODE="online"
-export WANDB_NAME="libero_cot_lora_freeze_llm_new_loss"
+export WANDB_NAME="libero_cot_full_ft"
 export TOKENIZERS_PARALLELISM="false"
 export TRANSFORMERS_NO_ADVISORY_WARNINGS="true"
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -62,8 +62,8 @@ deepspeed src/train.py \
     --seed 429 \
     --resume false \
     --gradient_accumulation_steps 4 \
-    --lora_enable true \
-    --freeze_llm true \
+    --lora_enable false \
+    --freeze_llm false \
     --enable_divergence_loss false \
     --enable_entropy_loss false \
     --cot_perturbation_type shuffle \

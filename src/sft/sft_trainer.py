@@ -285,9 +285,7 @@ class DeepThinkVLATrainer(Trainer):
             if num_items_in_batch is not None:
                 loss_kwargs["num_items_in_batch"] = num_items_in_batch
             inputs = {**inputs, **loss_kwargs}
-<<<<<<< Updated upstream
         outputs = model(**inputs, output_attentions=True)
-=======
             
         enable_action_grads = getattr(self.args, "log_action_gradients", False)
         embeds_list = []
@@ -305,7 +303,6 @@ class DeepThinkVLATrainer(Trainer):
         if handle is not None:
             handle.remove()
             
->>>>>>> Stashed changes
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:
@@ -363,8 +360,8 @@ class DeepThinkVLATrainer(Trainer):
                 "predict_token_accuracy": predict_token_accuracy.item(),
                 "ce_loss": loss.item(),
             }
-<<<<<<< Updated upstream
 
+        print(outputs.attentions)
         # Calculate attention from action tokens to various modalities
         if hasattr(outputs, "attentions") and outputs.attentions is not None:
             layer_attns = outputs.attentions[-1]
@@ -432,8 +429,6 @@ class DeepThinkVLATrainer(Trainer):
                     metrics["action_to_action_attention"] = sum(action_scores) / len(action_scores)
 
         self.log(metrics)
-=======
->>>>>>> Stashed changes
         ##############################################################################################################
         # Counterfactual Regularization Loss (Divergence & Entropy)
         enable_div = getattr(self.args, "enable_divergence_loss", False)
