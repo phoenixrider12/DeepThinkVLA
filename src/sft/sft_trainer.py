@@ -285,10 +285,6 @@ class DeepThinkVLATrainer(Trainer):
             if num_items_in_batch is not None:
                 loss_kwargs["num_items_in_batch"] = num_items_in_batch
             inputs = {**inputs, **loss_kwargs}
-<<<<<<< Updated upstream
-        outputs = model(**inputs, output_attentions=True)
-=======
->>>>>>> Stashed changes
             
         enable_action_grads = getattr(self.args, "log_action_gradients", False)
         embeds_list = []
