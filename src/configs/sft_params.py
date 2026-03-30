@@ -236,7 +236,7 @@ class TrainingArgument(TrainingArguments):
     # ddp_find_unused_parameters: bool = field(default=False)
     # """Whether to find unused parameters in DDP. If False, will not find unused parameters."""
     # ddp_bucket_cap_mb: int = field(default=100)
-    # """The bucket size in MB for DDP. If 0, will use the default bucket size."""
+    # """The bucket size in MB for DDP. If 0, will use the default bucket size."""s
     # torch_compile_model: str = field(default=None)
     # """Whether to use torch compile model. If None, will not use torch compile model."""
       

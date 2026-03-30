@@ -1,0 +1,5 @@
+Task suite: libero_10
+Using default initial states
+
+Task: put both the alphabet soup and the tomato sauce in the basket
+Starting episode 1...
