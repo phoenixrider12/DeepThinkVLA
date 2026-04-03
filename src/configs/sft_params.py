@@ -236,6 +236,9 @@ class TrainingArgument(TrainingArguments):
     attention_loss_weight: float = field(default=0.1)
     """Weight for the attention loss."""
 
+    target_attention_ratio: float = field(default=0.2)
+    """Upper bound target for action-to-cot attention. Loss shuts off above this boundary."""
+
     # ddp_find_unused_parameters: bool = field(default=False)
     # """Whether to find unused parameters in DDP. If False, will not find unused parameters."""
     # ddp_bucket_cap_mb: int = field(default=100)

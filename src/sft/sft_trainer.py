@@ -426,9 +426,11 @@ class DeepThinkVLATrainer(Trainer):
                     metrics["action_to_cot_attention"] = action_to_cot_tensor.item()
                     
                     if enable_attn_loss:
-                        # Optimize directly through the rollout multiplication graph
-                        # Maximize attention by minimizing its Negative Log-Likelihood
-                        attn_penalty_score = -torch.log(action_to_cot_tensor + 1e-8)
+                        # Target upper bound boundary (e.g. 0.2)
+                        target_attn = getattr(self.args, "target_attention_ratio", 0.2)
+                        
+                        # Hinge Loss: Applies linear force to push up to the target, then exactly 0 gradient when satisfied
+                        attn_penalty_score = torch.clamp_min(target_attn - action_to_cot_tensor, 0.0)
                         
                         attn_weight = getattr(self.args, "attention_loss_weight", 0.1)
                         weighted_attn_loss = attn_weight * attn_penalty_score
