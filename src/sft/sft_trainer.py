@@ -497,7 +497,7 @@ class DeepThinkVLATrainer(Trainer):
                             entropy = -torch.sum(pert_probs * pert_log_probs, dim=-1).mean()
                             ent_weight = getattr(self.args, "entropy_loss_weight", 0.1)
                             
-                            max_ent = math.log(vocab_size_act)
+                            max_ent = math.log(vocab_size_act)          # check this value and if the margins should be adjusted
                             ent_penalty = max_ent - entropy
                             ent_loss = ent_weight * ent_penalty
                             cf_loss += ent_loss
