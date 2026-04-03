@@ -349,8 +349,19 @@ class DeepThinkVLATrainer(Trainer):
 
         # Calculate attention from action tokens to various modalities
         if hasattr(outputs, "attentions") and outputs.attentions is not None:
-            layer_attns = outputs.attentions[-1]
-            avg_layer_attn = layer_attns.mean(dim=1)
+            with torch.no_grad():
+                seq_len = outputs.attentions[0].shape[-1]
+                device = outputs.attentions[0].device
+                rollout = torch.eye(seq_len, device=device)
+                
+                for layer_attn in outputs.attentions:
+                    avg_heads = layer_attn.mean(dim=1)
+                    residual = torch.eye(seq_len, device=device).unsqueeze(0)
+                    avg_heads = avg_heads + residual
+                    avg_heads = avg_heads / avg_heads.sum(dim=-1, keepdim=True)
+                    rollout = torch.matmul(avg_heads, rollout)
+                    
+                avg_layer_attn = rollout
             
             _labels = labels if labels is not None else inputs.get("labels")
             input_ids = inputs.get("input_ids")
