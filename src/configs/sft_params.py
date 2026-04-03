@@ -230,9 +230,6 @@ class TrainingArgument(TrainingArguments):
     entropy_loss_weight: float = field(default=0.1)
     """Weight for the entropy maximization loss."""
 
-    log_action_gradients: bool = field(default=False)
-    """Whether to compute and log the gradient norms of actions w.r.t input prompt and reasoning embeddings."""
-
     # ddp_find_unused_parameters: bool = field(default=False)
     # """Whether to find unused parameters in DDP. If False, will not find unused parameters."""
     # ddp_bucket_cap_mb: int = field(default=100)

@@ -69,5 +69,4 @@ deepspeed src/train.py \
     --cot_perturbation_type shuffle \
     --divergence_loss_weight 0.1 \
     --entropy_loss_weight 0.1 \
-    --log_action_gradients false \
     --logging_steps 5
