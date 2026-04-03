@@ -230,6 +230,12 @@ class TrainingArgument(TrainingArguments):
     entropy_loss_weight: float = field(default=0.1)
     """Weight for the entropy maximization loss."""
 
+    enable_attention_loss: bool = field(default=False)
+    """Whether to enable attention loss."""
+
+    attention_loss_weight: float = field(default=0.1)
+    """Weight for the attention loss."""
+
     # ddp_find_unused_parameters: bool = field(default=False)
     # """Whether to find unused parameters in DDP. If False, will not find unused parameters."""
     # ddp_bucket_cap_mb: int = field(default=100)

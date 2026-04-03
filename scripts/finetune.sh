@@ -64,9 +64,11 @@ deepspeed src/train.py \
     --gradient_accumulation_steps 4 \
     --lora_enable false \
     --freeze_llm false \
-    --enable_divergence_loss true \
-    --enable_entropy_loss true \
+    --enable_divergence_loss false \
+    --enable_entropy_loss false \
     --cot_perturbation_type shuffle \
     --divergence_loss_weight 0.1 \
     --entropy_loss_weight 0.1 \
+    --enable_attention_loss true \
+    --attention_loss_weight 0.1 \
     --logging_steps 5

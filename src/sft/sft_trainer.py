@@ -349,7 +349,11 @@ class DeepThinkVLATrainer(Trainer):
 
         # Calculate attention from action tokens to various modalities
         if hasattr(outputs, "attentions") and outputs.attentions is not None:
-            with torch.no_grad():
+            enable_attn_loss = getattr(self.args, "enable_attention_loss", False)
+            
+            # Conditionally manage the computation graph to save memory unless training the attention loss
+            context_manager = torch.enable_grad() if enable_attn_loss else torch.no_grad()
+            with context_manager:
                 seq_len = outputs.attentions[0].shape[-1]
                 device = outputs.attentions[0].device
                 rollout = torch.eye(seq_len, device=device)
@@ -368,7 +372,7 @@ class DeepThinkVLATrainer(Trainer):
             if _labels is not None and input_ids is not None:
                 config = model.module.config if hasattr(model, "module") else model.config
                 target_model = model.module if hasattr(model, "module") else model
-                pad_token_id = target_model.pad_token_id
+                pad_token_id = getattr(target_model, "pad_token_id", None)
                 image_token_index = getattr(config, "image_token_index", None)
 
                 ignore_idx = config.ignore_index
@@ -396,7 +400,8 @@ class DeepThinkVLATrainer(Trainer):
                 # 3. Action Mask
                 action_token_mask = (input_ids >= begin_idx) & (input_ids <= end_idx)
                 
-                cot_scores, image_scores, text_scores, action_scores = [], [], [], []
+                cot_scores_tensors = []
+                image_scores, text_scores, action_scores = [], [], []
                 
                 for b in range(avg_layer_attn.shape[0]):
                     queries = torch.nonzero(all_actions_mask[b]).squeeze(-1)
@@ -407,7 +412,8 @@ class DeepThinkVLATrainer(Trainer):
                     
                     if len(queries) > 0:
                         if len(cot_keys) > 0:
-                            cot_scores.append(avg_layer_attn[b][queries][:, cot_keys].sum(dim=-1).mean().item())
+                            # Keep tensor attached to the graph for backprop
+                            cot_scores_tensors.append(avg_layer_attn[b][queries][:, cot_keys].sum(dim=-1).mean())
                         if len(img_keys) > 0:
                             image_scores.append(avg_layer_attn[b][queries][:, img_keys].sum(dim=-1).mean().item())
                         if len(txt_keys) > 0:
@@ -415,8 +421,22 @@ class DeepThinkVLATrainer(Trainer):
                         if len(act_keys) > 0:
                             action_scores.append(avg_layer_attn[b][queries][:, act_keys].sum(dim=-1).mean().item())
                         
-                if cot_scores:
-                    metrics["action_to_cot_attention"] = sum(cot_scores) / len(cot_scores)
+                if cot_scores_tensors:
+                    action_to_cot_tensor = torch.stack(cot_scores_tensors).mean()
+                    metrics["action_to_cot_attention"] = action_to_cot_tensor.item()
+                    
+                    if enable_attn_loss:
+                        # Optimize directly through the rollout multiplication graph
+                        # Maximize attention by minimizing its Negative Log-Likelihood
+                        attn_penalty_score = -torch.log(action_to_cot_tensor + 1e-8)
+                        
+                        attn_weight = getattr(self.args, "attention_loss_weight", 0.1)
+                        weighted_attn_loss = attn_weight * attn_penalty_score
+                        
+                        # Add cleanly to the total cross-entropy return
+                        loss = loss + weighted_attn_loss
+                        metrics["attn_loss"] = weighted_attn_loss.item()
+                        
                 if image_scores:
                     metrics["action_to_vision_attention"] = sum(image_scores) / len(image_scores)
                 if text_scores:
