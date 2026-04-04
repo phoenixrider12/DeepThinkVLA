@@ -215,20 +215,14 @@ class TrainingArgument(TrainingArguments):
     remove_unused_columns: bool = field(default=False)
     """Whether to remove unused columns from the dataset. If False, will keep all columns."""
 
-    enable_divergence_loss: bool = field(default=False)
-    """Enable KL divergence loss to push counterfactual action distributions away from true ones."""
-
-    enable_entropy_loss: bool = field(default=False)
-    """Enable entropy maximization on counterfactual action distributions."""
-
-    cot_perturbation_type: str = field(default="shuffle")
-    """Type of perturbation to use for CoT: 'shuffle' or 'random'."""
-
-    divergence_loss_weight: float = field(default=0.1)
-    """Weight for the divergence loss."""
-
-    entropy_loss_weight: float = field(default=0.1)
-    """Weight for the entropy maximization loss."""
+    enable_action_norm_loss: bool = field(default=False)
+    """Enable dual-branch masked and swapped counterfactual action tracking penalty."""
+    
+    action_norm_loss_weight: float = field(default=0.1)
+    """Weight for the action margin loss."""
+    
+    target_action_diff_norm: float = field(default=15.0)
+    """Margin distance boundary to decouple action from CoT blindlyness."""
 
     enable_attention_loss: bool = field(default=False)
     """Whether to enable attention loss."""

@@ -448,11 +448,10 @@ class DeepThinkVLATrainer(Trainer):
 
         self.log(metrics)
         ##############################################################################################################
-        # Counterfactual Regularization Loss (Divergence & Entropy)
-        enable_div = getattr(self.args, "enable_divergence_loss", False)
-        enable_ent = getattr(self.args, "enable_entropy_loss", False)
+        # Counterfactual Regularization Loss (Action Norm)
+        enable_norm = getattr(self.args, "enable_action_norm_loss", False)
 
-        if enable_div or enable_ent:
+        if enable_norm:
             with torch.enable_grad():
                 perturbed_inputs = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
                 _labels = inputs.get("labels")
@@ -471,60 +470,89 @@ class DeepThinkVLATrainer(Trainer):
                     is_not_special = (_labels != 257156) & (_labels != eos_id)
                     cot_mask = is_not_ignore & is_not_action & is_not_special
                     
-                    perturb_type = getattr(self.args, "cot_perturbation_type", "shuffle")
+                    # Case 1: Masked CoT (Zero out attention to reasoning)
+                    masked_inputs = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+                    if "attention_mask" in masked_inputs:
+                        masked_inputs["attention_mask"][cot_mask] = 0
+                        
+                    # Case 2: Swapped CoT (Cross-pollinate reasoning from another item in batch)
+                    swapped_inputs = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+                    swapped_input_ids = swapped_inputs["input_ids"]
+                    bsz = swapped_input_ids.shape[0]
                     
-                    for b in range(perturbed_input_ids.shape[0]):
-                        row_mask = cot_mask[b]
-                        if row_mask.sum() > 0:
-                            if perturb_type == "shuffle":
-                                cot_tokens = perturbed_input_ids[b, row_mask]
-                                shuffled_indices = torch.randperm(cot_tokens.shape[0])
-                                perturbed_input_ids[b, row_mask] = cot_tokens[shuffled_indices]
-                            elif perturb_type == "random":
-                                vocab_size = config.text_config.vocab_size
-                                random_tokens = torch.randint(0, vocab_size, (row_mask.sum(),), device=perturbed_input_ids.device)
-                                perturbed_input_ids[b, row_mask] = random_tokens
+                    # Create an unbiased random derangement (no element maps to itself)
+                    if bsz > 1:
+                        swapped_indices = torch.randperm(bsz)
+                        while torch.any(swapped_indices == torch.arange(bsz)):
+                            swapped_indices = torch.randperm(bsz)
+                    else:
+                        swapped_indices = torch.arange(bsz)
                     
-                    # Forward pass with perturbed inputs
-                    perturbed_outputs = model(**perturbed_inputs)
+                    for b in range(bsz):
+                        other_b = swapped_indices[b].item()
+                        row_mask_b = cot_mask[b]
+                        row_mask_other = cot_mask[other_b]
+                        
+                        if row_mask_b.sum() > 0 and row_mask_other.sum() > 0:
+                            other_tokens = inputs["input_ids"][other_b, row_mask_other]
+                            target_len = row_mask_b.sum().item()
+                            
+                            # Trim or pad seamlessly to fit exact dimension slots without breaking positional embeddings
+                            if other_tokens.shape[0] > target_len:
+                                other_tokens = other_tokens[:target_len]
+                            elif other_tokens.shape[0] < target_len:
+                                pad_len = target_len - other_tokens.shape[0]
+                                pad_token = config.pad_token_id if hasattr(config, "pad_token_id") else 0
+                                padding = torch.full((pad_len,), pad_token, device=other_tokens.device)
+                                other_tokens = torch.cat([other_tokens, padding])
+                                
+                            swapped_input_ids[b, row_mask_b] = other_tokens
+                            
+                    # Run Counterfactual Forward Passes
+                    masked_outputs = model(**masked_inputs)
+                    swapped_outputs = model(**swapped_inputs)
                     
                     true_logits = outputs.logits[:, :-1, :]
-                    pert_logits = perturbed_outputs.logits[:, :-1, :]
+                    masked_logits = masked_outputs.logits[:, :-1, :]
+                    swapped_logits = swapped_outputs.logits[:, :-1, :]
                     
-                    # We use all_actions_mask from above (already computed)
                     true_action_logits = true_logits[all_actions_mask] 
-                    pert_action_logits = pert_logits[all_actions_mask] 
+                    masked_action_logits = masked_logits[all_actions_mask] 
+                    swapped_action_logits = swapped_logits[all_actions_mask]
                     
                     if true_action_logits.shape[0] > 0:
                         cf_loss = 0.0
                         
-                        if enable_div:
-                            true_probs = F.softmax(true_action_logits, dim=-1).detach()
-                            pert_log_probs = F.log_softmax(pert_action_logits, dim=-1)
+                        if enable_norm:
+                            begin_idx = config.action_token_begin_idx
+                            end_idx = config.action_token_end_idx
                             
-                            kl_div = F.kl_div(pert_log_probs, true_probs, reduction='batchmean')
-                            div_weight = getattr(self.args, "divergence_loss_weight", 0.1)
-                            margin = 5.0
-                            div_penalty = torch.clamp(margin - kl_div, min=0.0)
-                            div_loss = div_weight * div_penalty
-                            cf_loss += div_loss
-                            metrics["div_loss"] = div_loss.item()
-                            metrics["kl_div"] = kl_div.item()
+                            def get_expected_actions(log_tensor):
+                                bin_logits = log_tensor[:, begin_idx:end_idx+1]
+                                probs = F.softmax(bin_logits, dim=-1)
+                                indices = torch.arange(end_idx - begin_idx + 1, device=probs.device, dtype=torch.float32)
+                                return (probs * indices).sum(dim=-1)
+                                
+                            main_expected = get_expected_actions(true_action_logits)
+                            masked_expected = get_expected_actions(masked_action_logits)
+                            swapped_expected = get_expected_actions(swapped_action_logits)
                             
-                        if enable_ent:
-                            vocab_size_act = pert_action_logits.shape[-1]
-                            pert_probs = F.softmax(pert_action_logits, dim=-1)
-                            pert_log_probs = F.log_softmax(pert_action_logits, dim=-1)
+                            # Measure how far the robotic actions shifted off-course 
+                            diff_masked = torch.abs(main_expected - masked_expected).mean()
+                            diff_swapped = torch.abs(main_expected - swapped_expected).mean()
                             
-                            entropy = -torch.sum(pert_probs * pert_log_probs, dim=-1).mean()
-                            ent_weight = getattr(self.args, "entropy_loss_weight", 0.1)
+                            # Penalize to INCREASE these differences using a structural margin boundary
+                            target_diff = getattr(self.args, "target_action_diff_norm", 15.0)
+                            penalty_masked = torch.clamp_min(target_diff - diff_masked, 0.0)
+                            penalty_swapped = torch.clamp_min(target_diff - diff_swapped, 0.0)
                             
-                            max_ent = math.log(vocab_size_act)          # check this value and if the margins should be adjusted
-                            ent_penalty = max_ent - entropy
-                            ent_loss = ent_weight * ent_penalty
-                            cf_loss += ent_loss
-                            metrics["ent_loss"] = ent_loss.item()
-                            metrics["entropy"] = entropy.item()
+                            norm_weight = getattr(self.args, "action_norm_loss_weight", 0.1)
+                            weighted_norm_loss = norm_weight * (penalty_masked + penalty_swapped)
+                            
+                            cf_loss += weighted_norm_loss
+                            metrics["norm_diff_masked"] = diff_masked.item()
+                            metrics["norm_diff_swapped"] = diff_swapped.item()
+                            metrics["cf_action_norm_loss"] = weighted_norm_loss.item()
                             
                         loss = loss + cf_loss
                         metrics["cf_loss"] = cf_loss.item() if isinstance(cf_loss, torch.Tensor) else cf_loss
